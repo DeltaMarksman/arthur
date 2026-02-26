@@ -6,6 +6,7 @@
 #define MOTOR_A_P       9
 #define MOTOR_B_EN      10
 #define MOTOR_A_EN      11
+#define LED             13
 
 // Variables
 bool motor_A_forwards = true;
@@ -16,6 +17,7 @@ int motor_B_out = 0;  // Left motor output
 void setup() {
   // Begin serial
   Serial.begin(115200);
+  //Serial.println("Arduino Hello!");
 
   // Initialize controls
   pinMode(  RIGHT_STICK_X ,   INPUT   );
@@ -28,6 +30,7 @@ void setup() {
   pinMode(  MOTOR_A_N     ,   OUTPUT  );
   pinMode(  MOTOR_B_EN    ,   OUTPUT  );
   pinMode(  MOTOR_A_EN    ,   OUTPUT  );
+  pinMode(  LED           ,   OUTPUT  );
 
 }
 
@@ -72,7 +75,27 @@ int low_level_booster(int input) {
 }
 
 
+void serial_control_loop() {
+  if (Serial.available() <= 0) 
+    return;
+
+  int incomingByte = Serial.read();
+  //test
+  digitalWrite(LED, HIGH);
+  delay(100);
+  digitalWrite(LED, LOW);
+  Serial.println(incomingByte);
+}
+
+
+bool controlled_by_serial = false;
 void loop() {
+  if (controlled_by_serial) {
+    serial_control_loop();
+    return;
+  }
+
+
   // Get control values
   int steering = low_level_booster(map(pulseIn(RIGHT_STICK_X, HIGH), 1000, 1989, -255, 255));
   int throttle = low_level_booster(map(pulseIn(RIGHT_STICK_Y, HIGH), 995, 1989, -255, 255));
@@ -84,8 +107,12 @@ void loop() {
   if (abs(throttle) <= boost_to_level * 0.9)
     throttle = 0;
 
-  // If remote is off, return
+  // If remote is off, take control using serial
   if (abs(throttle) > 260)
+    Serial.println("Long PWM, remote may be off.");
+    if (Serial.available() > 0) {
+      controlled_by_serial = 1;
+    }
     return;
   
   // Assign motor speeds
