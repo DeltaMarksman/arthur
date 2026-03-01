@@ -1,53 +1,106 @@
 from google import genai
 from api_header import API_KEY
+import control_defaults as cd
+import json
+import time
 
 client = genai.Client(api_key=API_KEY)
 
+
+# --- Existing API Functions ---
+
 def gemini_api(prompt, response_count):
-    # Request the stream
-    response_stream = client.models.generate_content_stream(
-        model="gemini-3-flash-preview",
-        contents=f"{prompt}; keep this response to less than 3 sentences"
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=f"{prompt}; keep this response shorter than 5 sentences"
+    )
+    print(f"\nGemini: {response.text}")
+    response_count += 1
+    return (100 if response_count < 10 else 200), response_count
+
+
+def gemini_api_movement(pos: cd.RobotPosition, target: cd.TargetRobotPosition, prompt, response_count):
+    context = (
+        f"Position: {pos.model_dump()}, Target: {target.model_dump()}. "
+        f"Task: {prompt}"
     )
 
-    # Process the stream and print response
-    for chunk in response_stream:
-        print(chunk.text, end="")
-    print() # New line after stream finishes
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=context,
+        config={
+            "response_mime_type": "application/json",
+            "response_schema": cd.RobotBrainPacket,
+        }
+    )
 
-    # Increment counter
+    try:
+        command = cd.RobotBrainPacket.model_validate_json(response.text)
+        print(f"\n[AI Reasoning]: {command.reasoning}")
+        print(f"[Action]: T:{command.controls.throttle} S:{command.controls.steering}")
+
+        # Update our local position for simulation purposes
+        # (Ideally, this would be replaced by actual Arduino feedback)
+        pos.x += (command.controls.throttle / 255.0)
+        pos.theta += (command.controls.steering / 255.0)
+
+        status = command.status
+    except Exception as e:
+        print(f"Error parsing movement JSON: {e}")
+        status = 100
+
     response_count += 1
+    return status, response_count
 
-    # Logic: Continue if under 5 responses, else stop
-    if response_count < 5:
-        return 100, response_count
-    else:
-        print("\n--- Max conversation limit reached ---")
-        return 200, response_count
+
+# --- Main Execution ---
 
 if __name__ == "__main__":
-    # Initialize status to start the loop
     status = 100
     count = 0
-    print("System active. Enter '200' to stop.")
 
-    while status == 100:
-        user_input = input("Ask Gemini 3: ")
-        status, count = gemini_api(user_input, count)
-        # Try to convert input to an integer to match your condition
-        try:
-            int(user_input)
-            status = int(user_input)
-        except ValueError:
-            continue
+    current_pos = cd.RobotPosition(x=0.0, y=0.0, theta=0.0)
+    target_pos = cd.TargetRobotPosition(target_x=10.0, target_y=10.0)
 
-        if status == 100:
-            print("Status remains 100. Continuing...")
-        elif status == 200:
-            print("Status 200 received. Shutting down.")
+    print("System active.")
+    print("100: Chat | 150: Run 5-Movement Test | 200: Stop")
+
+    while status != 200:
+        user_input = input("\nInput Command/Code: ")
+
+        # 1. Check for Stop Code
+        if user_input == "200":
+            print("Shutting down...")
+            break
+
+        # 2. Check for 5-Movement Test Code
+        elif user_input == "150":
+            print("\n--- Starting 5-Movement Autonomous Test ---")
+            test_prompt = "Navigate toward the target safely."
+
+            for i in range(5):
+                print(f"\n--- Test Step {i + 1}/5 ---")
+                status, count = gemini_api_movement(current_pos, target_pos, test_prompt, count)
+
+                if status == 200:
+                    print("AI requested stop during test.")
+                    break
+
+                time.sleep(0.5)  # Brief pause for readability
+            print("\n--- Test Sequence Complete ---")
+
+        # 3. Handle General Chat or Manual "Move"
         else:
-            continue
+            try:
+                # If they just entered 100 or something else, treat as chat
+                if user_input == "100":
+                    user_input = input("Chat Message: ")
 
-
+                if "move" in user_input.lower():
+                    status, count = gemini_api_movement(current_pos, target_pos, user_input, count)
+                else:
+                    status, count = gemini_api(user_input, count)
+            except Exception as e:
+                print(f"Error: {e}")
 
     print("Loop exited.")
