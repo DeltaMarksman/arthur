@@ -9,9 +9,13 @@
 #define LED             13
 
 // Serial Protocol
+#define SERIAL_INACTIVE   0b11110000
+#define LED               0b00000000
 #define LED_ON            0b00001111
 #define LED_OFF           0b00000001
-#define SERIAL_INACTIVE   0b11110000
+#define THROTTLE          0b00100000
+#define STEERING          0b01000000
+
 
 // Variables
 bool motor_A_forwards   = true;
@@ -94,31 +98,73 @@ void serial_control_loop() {
   if (Serial.available() <= 0) 
     return;
 
-  int incomingByte = Serial.read();
-
+  uint8_t incomingByte = Serial.read();
   Serial.println(incomingByte);
 
-  switch (incomingByte) {
-    case LED_ON:
-      Serial.println("Received message LED_ON");
-      led_on();
-      break;
-    case LED_OFF:
-      Serial.println("Received message LED_OFF");
-      led_off();
+  // Extract fields
+  uint8_t   peripheral    = incomingByte & 0b11100000;  // PPPS ----
+  uint8_t   magnitude     = incomingByte & 0b00001111;  // ---- XXXX
+  bool      isNegative    = incomingByte & 0b00010000;  // ---- S---
+
+  int value = magnitude * (isNegative ? -1 : 1);
+
+  switch (peripheral) {
+
+    // -------------------------
+    // LED CONTROL
+    // -------------------------
+    case LED:
+      switch (magnitude) {
+        case LED_ON:   // LED_ON
+          Serial.println("Received LED_ON");
+          led_on();
+          break;
+
+        case LED_OFF:   // LED_OFF
+          Serial.println("Received LED_OFF");
+          led_off();
+          break;
+
+        default:
+          Serial.print("Unknown LED command: ");
+          Serial.println(magnitude, BIN);
+          break;
+      }
       break;
 
+    // -------------------------
+    // THROTTLE CONTROL
+    // -------------------------
+    case THROTTLE:   // 001S XXXX
+      throttle = map(value, -16, 16, -255, 255);
+      Serial.print("Throttle set to: ");
+      Serial.println(throttle);
+      break;
+
+    // -------------------------
+    // STEERING CONTROL
+    // -------------------------
+    case STEERING:   // 010S XXXX
+      steering = map(value, -16, 16, -255, 255);
+      Serial.print("Steering set to: ");
+      Serial.println(steering);
+      break;
+
+    // -------------------------
+    // UNKNOWN / UNUSED
+    // -------------------------
+    default:
+      Serial.print("Unknown peripheral: ");
+      Serial.println(peripheral, BIN);
+      break;
   }
-
-  steering = 0;
-  throttle = 0;
 }
 
 
 bool controlled_by_serial = false;
 void loop() {
   if (controlled_by_serial) {
-    serial_control_loop();
+      serial_control_loop();
   } else {
     // Get control values
     steering = low_level_booster(map(pulseIn(RIGHT_STICK_X, HIGH), 1000, 1989, -255, 255));
@@ -129,21 +175,25 @@ void loop() {
   Serial.print("Steering: " + String(steering));
   Serial.println("\t\tThrottle: " + String(throttle));
   
-  // Create deadzones
-  if (abs(steering) <= boost_to_level * 0.9)
-    steering = 0;
+  // Create deadzones if rc controlled
+  if (!controlled_by_serial) {
+    if (abs(steering) <= boost_to_level * 0.9)
+      steering = 0;
 
-  if (abs(throttle) <= boost_to_level * 0.9)
-    throttle = 0;
+    if (abs(throttle) <= boost_to_level * 0.9)
+      throttle = 0;
+  }
 
   // If remote is off, take control using serial
   if (abs(throttle) > 260) {
     Serial.println("Long PWM, remote may be off.");
     Serial.write(SERIAL_INACTIVE);
     Serial.println();
-    if (Serial.available() > 0) {
+    if (Serial.available() > 0 && controlled_by_serial == false) {
       controlled_by_serial = 1;
       Serial.println("Serial control activated.");
+      throttle = 0;
+      steering = 0;
     }
     return;
   }

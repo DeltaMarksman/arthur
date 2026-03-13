@@ -2,13 +2,11 @@ import serial
 import time
 import threading
 
-from pydantic import PositiveInt
-
 """
 Arthur Control Protocol
 ArCo Protocol
 
-PPPS XXXX
+    PPPS XXXX
 P - Peripheral to control (LED, MOTOR_A, etc.)
 S - Sign of value
 X - Value to write to peripheral
@@ -34,6 +32,48 @@ STEERING            = 0b01000000
 POSITIVE            = 0b00000000
 NEGATIVE            = 0b00010000
 
+throttle = 0        # From -16 -> 16
+steering = 0        # From -16 -> 16
+
+def increase_throttle():
+    global throttle
+    throttle += 1
+    throttle = min(16, throttle)
+
+def decrease_throttle():
+    global throttle
+    throttle -= 1
+    throttle = max(-16, throttle)
+
+def increase_steering():
+    global steering
+    steering += 1
+    steering = min(16, steering)
+
+def decrease_steering():
+    global steering
+    steering -= 1
+    steering = max(-16, steering)
+
+def stop_all():
+    global throttle, steering
+    throttle = 0
+    steering = 0
+    com.write(bytes([encode_throttle()]))
+    com.write(bytes([encode_steering()]))
+    com.flush()
+
+def encode_throttle():
+    byte = THROTTLE
+    byte |= NEGATIVE if throttle < 0 else 0
+    byte |= abs(throttle)
+    return byte
+
+def encode_steering():
+    byte = STEERING
+    byte |= NEGATIVE if steering < 0 else 0
+    byte |= abs(steering)
+    return byte
 
 # Send input
 def send_input():
@@ -51,9 +91,28 @@ def send_input():
                 com.write(bytes([LED_OFF]))
                 com.flush()
             case "8":
-                print("Setting Throttle to positive")
-                com.write(bytes([LED_OFF]))
+                print("increasing Throttle")
+                increase_throttle()
+                com.write(bytes([encode_throttle()]))
                 com.flush()
+            case "2":
+                print("decreasing Throttle")
+                decrease_throttle()
+                com.write(bytes([encode_throttle()]))
+                com.flush()
+            case "6":
+                print("increasing Steering")
+                increase_steering()
+                com.write(bytes([encode_steering()]))
+                com.flush()
+            case "4":
+                print("decreasing Steering")
+                decrease_steering()
+                com.write(bytes([encode_steering()]))
+                com.flush()
+            case "5":
+                print("stopping")
+                stop_all()
 
 def print_received():
     # Read line
