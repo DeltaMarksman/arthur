@@ -1,23 +1,30 @@
 #define RIGHT_STICK_X   2
 #define RIGHT_STICK_Y   3
-#define MOTOR_B_P       6
+#define MOTOR_B_P       4
 #define MOTOR_B_N       7
-#define MOTOR_A_N       8
-#define MOTOR_A_P       9
+#define MOTOR_A_N       9
+#define MOTOR_A_P       8
 #define MOTOR_B_EN      10
 #define MOTOR_A_EN      11
 #define LED             13
 
+// Serial Protocol
+#define LED_ON            0b00001111
+#define LED_OFF           0b00000001
+#define SERIAL_INACTIVE   0b11110000
+
 // Variables
-bool motor_A_forwards = true;
-bool motor_B_forwards = true;
-int motor_A_out = 0;  // Right motor output
-int motor_B_out = 0;  // Left motor output
+bool motor_A_forwards   = true;
+bool motor_B_forwards   = true;
+int motor_A_out         = 0;  // Right motor output
+int motor_B_out         = 0;  // Left motor output
+int steering            = 0;  // Steering input
+int throttle            = 0;  // Throttle input
 
 void setup() {
   // Begin serial
-  Serial.begin(115200);
-  //Serial.println("Arduino Hello!");
+  Serial.begin(9600);
+  Serial.println("Arduino Hello!");
 
   // Initialize controls
   pinMode(  RIGHT_STICK_X ,   INPUT   );
@@ -44,7 +51,7 @@ Formula is outlined in
 https://www.desmos.com/calculator/0yqgsdipvz
 */
 const int boost_to_level = 70;
-const int low_level_threshold = 10;
+const int low_level_threshold = 20;
 const float linearity = 35.0;
 int low_level_booster(int input) {
 
@@ -74,17 +81,37 @@ int low_level_booster(int input) {
   return was_negative ? output * -1 : output;
 }
 
+void led_on() {
+  digitalWrite(LED, HIGH);
+}
+
+void led_off() {
+  digitalWrite(LED, LOW);
+}
+
 
 void serial_control_loop() {
   if (Serial.available() <= 0) 
     return;
 
   int incomingByte = Serial.read();
-  //test
-  digitalWrite(LED, HIGH);
-  delay(100);
-  digitalWrite(LED, LOW);
+
   Serial.println(incomingByte);
+
+  switch (incomingByte) {
+    case LED_ON:
+      Serial.println("Received message LED_ON");
+      led_on();
+      break;
+    case LED_OFF:
+      Serial.println("Received message LED_OFF");
+      led_off();
+      break;
+
+  }
+
+  steering = 0;
+  throttle = 0;
 }
 
 
@@ -92,13 +119,15 @@ bool controlled_by_serial = false;
 void loop() {
   if (controlled_by_serial) {
     serial_control_loop();
-    return;
+  } else {
+    // Get control values
+    steering = low_level_booster(map(pulseIn(RIGHT_STICK_X, HIGH), 1000, 1989, -255, 255));
+    throttle = low_level_booster(map(pulseIn(RIGHT_STICK_Y, HIGH), 995, 1989, -255, 255));
   }
 
 
-  // Get control values
-  int steering = low_level_booster(map(pulseIn(RIGHT_STICK_X, HIGH), 1000, 1989, -255, 255));
-  int throttle = low_level_booster(map(pulseIn(RIGHT_STICK_Y, HIGH), 995, 1989, -255, 255));
+  Serial.print("Steering: " + String(steering));
+  Serial.println("\t\tThrottle: " + String(throttle));
   
   // Create deadzones
   if (abs(steering) <= boost_to_level * 0.9)
@@ -108,16 +137,21 @@ void loop() {
     throttle = 0;
 
   // If remote is off, take control using serial
-  if (abs(throttle) > 260)
+  if (abs(throttle) > 260) {
     Serial.println("Long PWM, remote may be off.");
+    Serial.write(SERIAL_INACTIVE);
+    Serial.println();
     if (Serial.available() > 0) {
       controlled_by_serial = 1;
+      Serial.println("Serial control activated.");
     }
     return;
+  }
   
   // Assign motor speeds
   motor_A_out = constrain(throttle - steering, -255, 255);
   motor_B_out = constrain(throttle + steering, -255, 255);
+
 
   Serial.println(motor_A_out);
   Serial.println(motor_B_out);
