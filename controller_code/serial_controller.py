@@ -12,6 +12,6 @@ with serial.Serial(port='COM7', baudrate=115200) as com:
 
     while True:
         # Wait for input
-        input()
+        time.sleep(0.1)
         touch()
 
